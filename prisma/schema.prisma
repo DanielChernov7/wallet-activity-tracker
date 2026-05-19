@@ -1,0 +1,107 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Chain {
+  ETHEREUM
+  BASE
+  ARBITRUM
+  SOLANA
+}
+
+enum TxType {
+  TRANSFER
+  ERC20_TRANSFER
+  SWAP
+  NFT_MINT
+  NFT_TRANSFER
+  CONTRACT_CALL
+  SOL_TRANSFER
+  SPL_TRANSFER
+  UNKNOWN
+}
+
+enum AlertChannel {
+  TELEGRAM
+  WEBHOOK
+  WEBSOCKET
+}
+
+model Wallet {
+  id           String        @id @default(cuid())
+  address      String
+  chain        Chain
+  label        String?
+  active       Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  alerts       Alert[]
+  transactions Transaction[]
+
+  @@unique([chain, address])
+  @@index([address])
+}
+
+model Transaction {
+  id          String   @id @default(cuid())
+  hash        String
+  chain       Chain
+  type        TxType
+  blockNumber BigInt?
+  fromAddress String
+  toAddress   String
+  tokenSymbol String?
+  tokenAmount String?
+  valueUsd    Float?
+  raw         Json
+  walletId    String?
+  wallet      Wallet?  @relation(fields: [walletId], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+
+  @@unique([chain, hash, fromAddress, toAddress])
+  @@index([walletId, createdAt])
+  @@index([chain, createdAt])
+}
+
+model Alert {
+  id        String         @id @default(cuid())
+  walletId  String
+  name      String
+  condition Json
+  channels  Json
+  enabled   Boolean        @default(true)
+  createdAt DateTime       @default(now())
+  wallet    Wallet         @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  events    AlertEvent[]
+
+  @@index([walletId, enabled])
+}
+
+model AlertEvent {
+  id            String      @id @default(cuid())
+  alertId       String
+  transactionId String?
+  payload       Json
+  deliveredAt   DateTime?
+  failedReason  String?
+  createdAt     DateTime    @default(now())
+  alert         Alert       @relation(fields: [alertId], references: [id], onDelete: Cascade)
+
+  @@index([alertId, createdAt])
+}
+
+model AddressLabel {
+  id        String   @id @default(cuid())
+  chain     Chain
+  address   String
+  label     String
+  category  String?
+  createdAt DateTime @default(now())
+
+  @@unique([chain, address])
+}
