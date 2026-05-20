@@ -1,13 +1,21 @@
 import 'dotenv/config';
 import { z } from 'zod';
 
+const boolish = z
+  .union([z.boolean(), z.enum(['true', 'false', '1', '0', 'yes', 'no'])])
+  .transform((v) => (typeof v === 'boolean' ? v : ['true', '1', 'yes'].includes(v)))
+  .default(false);
+
 const schema = z.object({
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url().default('redis://localhost:6379'),
 
   ETH_WSS_URL: z.string().optional(),
+  ETH_HTTP_URL: z.string().optional(),
   BASE_WSS_URL: z.string().optional(),
+  BASE_HTTP_URL: z.string().optional(),
   ARBITRUM_WSS_URL: z.string().optional(),
+  ARBITRUM_HTTP_URL: z.string().optional(),
 
   SOLANA_RPC_URL: z.string().optional(),
   YELLOWSTONE_GRPC_URL: z.string().optional(),
@@ -18,9 +26,15 @@ const schema = z.object({
 
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_CHAT_ID: z.string().optional(),
+  TELEGRAM_ALLOWED_USER_IDS: z.string().optional(),
 
   API_PORT: z.coerce.number().default(3000),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+
+  ERC20_CACHE_ENABLED: boolish,
+  MULTICALL3_ADDRESS: z
+    .string()
+    .default('0xcA11bde05977b3631167028862bE2a173976CA11'),
 });
 
 export type Env = z.infer<typeof schema>;

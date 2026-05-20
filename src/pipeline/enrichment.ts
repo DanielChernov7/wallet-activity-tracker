@@ -2,6 +2,7 @@ import { Chain, TxType } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { getUsdPrice } from '../prices/prices.js';
 import { lookupLabel } from '../labels/labels.js';
+import { getErc20Metadata } from '../cache/index.js';
 import { logger } from '../config/logger.js';
 
 export type EnrichedTx = {
@@ -42,7 +43,8 @@ export async function enrich(input: RawInput): Promise<EnrichedTx> {
   let tokenAmount: string | undefined;
 
   if (input.raw?.kind === 'erc20_transfer') {
-    tokenSymbol = input.raw.tokenSymbol ?? undefined;
+    const meta = await safe(() => getErc20Metadata(input.chain, input.raw.tokenContract));
+    tokenSymbol = meta?.symbol ?? input.raw.tokenSymbol ?? undefined;
     tokenAmount = input.raw.value;
     // Price lookup is contract-based; assumes prices module resolves by chain+contract.
     valueUsd = await safe(() =>

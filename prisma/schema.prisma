@@ -33,18 +33,20 @@ enum AlertChannel {
 }
 
 model Wallet {
-  id           String        @id @default(cuid())
-  address      String
-  chain        Chain
-  label        String?
-  active       Boolean       @default(true)
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  alerts       Alert[]
-  transactions Transaction[]
+  id             String        @id @default(cuid())
+  address        String
+  chain          Chain
+  label          String?
+  active         Boolean       @default(true)
+  telegramChatId String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  alerts         Alert[]
+  transactions   Transaction[]
 
   @@unique([chain, address])
   @@index([address])
+  @@index([telegramChatId])
 }
 
 model Transaction {
