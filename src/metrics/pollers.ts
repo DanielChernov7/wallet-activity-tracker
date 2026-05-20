@@ -1,12 +1,20 @@
 import { Chain } from '@prisma/client';
-import { rawTxQueue, enrichQueue, notifyQueue, connection } from '../queues/index.js';
+import { rawTxQueue, enrichQueue, notifyQueue, metaConnection } from '../queues/index.js';
 import { prisma } from '../db/prisma.js';
 import { metrics } from './index.js';
 import { logger } from '../config/logger.js';
 
 const POLL_INTERVAL_MS = 15_000;
+const PING_TIMEOUT_MS = 2_000;
 
 let timer: NodeJS.Timeout | null = null;
+
+async function pingWithTimeout(): Promise<boolean> {
+  return Promise.race([
+    metaConnection.ping().then(() => true).catch(() => false),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), PING_TIMEOUT_MS)),
+  ]);
+}
 
 export function startMetricsPollers(): void {
   const m = metrics();
@@ -39,18 +47,8 @@ export function startMetricsPollers(): void {
         if (!present.has(c)) m.walletsMonitored.set({ chain: c }, 0);
       }
 
-      // Redis liveness — ping via the BullMQ connection
-      try {
-        const client = connection as unknown as { ping?: () => Promise<string> };
-        if (client.ping) {
-          await client.ping();
-          m.redisConnected.set(1);
-        } else {
-          m.redisConnected.set(0);
-        }
-      } catch {
-        m.redisConnected.set(0);
-      }
+      // Redis liveness — short-lived dedicated client + bounded ping timeout.
+      m.redisConnected.set((await pingWithTimeout()) ? 1 : 0);
     } catch (err) {
       logger.warn({ err }, 'metrics poller tick failed');
     }

@@ -80,11 +80,13 @@ model Alert {
   condition Json
   channels  Json
   enabled   Boolean        @default(true)
+  apiKey    String?
   createdAt DateTime       @default(now())
   wallet    Wallet         @relation(fields: [walletId], references: [id], onDelete: Cascade)
   events    AlertEvent[]
 
   @@index([walletId, enabled])
+  @@index([apiKey])
 }
 
 model AlertEvent {

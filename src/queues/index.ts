@@ -1,9 +1,18 @@
-import { Queue, QueueEvents, Worker, type ConnectionOptions } from 'bullmq';
-import IORedis from 'ioredis';
+import { Queue, QueueEvents, Worker } from 'bullmq';
+import IORedis, { type Redis as RedisType } from 'ioredis';
 import { env } from '../config/env.js';
 
-export const connection: ConnectionOptions = new IORedis(env.REDIS_URL, {
+// Dedicated IORedis instance for BullMQ. BullMQ requires maxRetriesPerRequest:null
+// for blocking commands (BLPOP); we keep this connection isolated from the
+// liveness/metrics path so a stuck BLPOP can't masquerade as a ping failure.
+export const connection: RedisType = new IORedis(env.REDIS_URL, {
   maxRetriesPerRequest: null,
+});
+
+// Separate client for short-lived ops (pings, ad-hoc commands). Cheap to keep.
+export const metaConnection: RedisType = new IORedis(env.REDIS_URL, {
+  maxRetriesPerRequest: 3,
+  enableOfflineQueue: false,
 });
 
 export const QUEUES = {

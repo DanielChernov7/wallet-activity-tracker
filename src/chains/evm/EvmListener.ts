@@ -27,6 +27,9 @@ export class EvmListener implements ChainListener {
   private handler: ((ev: RawTransactionEvent) => void | Promise<void>) | null = null;
   private reconnectAttempts = 0;
   private stopped = false;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  /** Monotonic generation counter — handlers compare against it to detect a stale provider. */
+  private gen = 0;
 
   constructor(opts: EvmListenerOptions) {
     this.chain = opts.chain;
@@ -46,8 +49,28 @@ export class EvmListener implements ChainListener {
 
   async stop(): Promise<void> {
     this.stopped = true;
-    await this.provider?.destroy();
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    await this.teardownProvider();
+  }
+
+  /** Detach everything we attached and destroy the WS provider. Safe to call repeatedly. */
+  private async teardownProvider(): Promise<void> {
+    const p = this.provider;
+    if (!p) return;
     this.provider = undefined;
+    try {
+      p.removeAllListeners();
+    } catch {
+      /* ignore */
+    }
+    try {
+      await p.destroy();
+    } catch {
+      /* ignore */
+    }
   }
 
   async watch(address: string, walletId: string): Promise<void> {
@@ -60,31 +83,45 @@ export class EvmListener implements ChainListener {
 
   private async connect(): Promise<void> {
     if (this.stopped) return;
+    // Always start from a clean slate — kills handlers + WS from the previous generation.
+    await this.teardownProvider();
+
+    const myGen = ++this.gen;
     const provider = new ethers.WebSocketProvider(this.wssUrl);
     this.provider = provider;
+
+    const guard = <T extends unknown[]>(fn: (...args: T) => void) =>
+      (...args: T): void => {
+        if (myGen !== this.gen || this.stopped) return;
+        fn(...args);
+      };
 
     // Listen to ERC20 Transfer logs; addresses are filtered in handler.
     provider.on(
       { topics: [ERC20_TRANSFER_TOPIC] },
-      (log: ethers.Log) => void this.handleLog(log),
+      guard((log: ethers.Log) => void this.handleLog(log)),
     );
 
     // Native value transfers: tap every block, fetch txs that touch watched.
-    provider.on('block', (blockNumber: number) => void this.handleBlock(blockNumber));
+    provider.on('block', guard((blockNumber: number) => void this.handleBlock(blockNumber)));
 
     const ws = (provider.websocket as unknown as { on?: (e: string, cb: () => void) => void });
-    ws.on?.('close', () => this.scheduleReconnect());
-    ws.on?.('error', () => this.scheduleReconnect());
+    ws.on?.('close', guard(() => this.scheduleReconnect()));
+    ws.on?.('error', guard(() => this.scheduleReconnect()));
 
     this.reconnectAttempts = 0;
-    logger.info({ chain: this.chain }, 'evm listener connected');
+    logger.info({ chain: this.chain, gen: myGen }, 'evm listener connected');
   }
 
   private scheduleReconnect(): void {
-    if (this.stopped) return;
+    if (this.stopped || this.reconnectTimer) return;
     const delay = Math.min(30_000, 500 * 2 ** this.reconnectAttempts++);
     logger.warn({ chain: this.chain, delay }, 'evm ws closed, reconnecting');
-    setTimeout(() => void this.connect().catch(() => this.scheduleReconnect()), delay);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      void this.connect().catch(() => this.scheduleReconnect());
+    }, delay);
+    this.reconnectTimer.unref?.();
   }
 
   private async handleLog(log: ethers.Log): Promise<void> {

@@ -221,6 +221,78 @@ describe('SolanaGrpcListener', () => {
     await listener.stop();
   });
 
+  it('accepts an async clientFactory (ESM dynamic import path)', async () => {
+    const stream = makeStream();
+    const client = makeClient(stream);
+    const asyncFactory = vi.fn(async () => {
+      await Promise.resolve();
+      return client;
+    });
+    const listener = new SolanaGrpcListener({
+      endpoint: 'https://test',
+      xToken: 't',
+      clientFactory: asyncFactory,
+    });
+    listener.onTx(() => undefined);
+    await listener.start([{ address: WATCHED, walletId: 'w1' }]);
+    expect(asyncFactory).toHaveBeenCalledOnce();
+    expect(stream.write).toHaveBeenCalledOnce();
+    await listener.stop();
+  });
+
+  it('after reconnect, events emitted on the old stream are ignored (no leak)', async () => {
+    const stream1 = makeStream();
+    const stream2 = makeStream();
+    let call = 0;
+    const client: YellowstoneClientLike = {
+      subscribe: vi.fn(async () => {
+        call++;
+        return (call === 1 ? stream1 : stream2) as unknown as YellowstoneStream;
+      }),
+    };
+    const listener = new SolanaGrpcListener({
+      endpoint: 'https://test',
+      xToken: 't',
+      clientFactory: () => client,
+    });
+    const onTx = vi.fn();
+    listener.onTx(onTx);
+    await listener.start([{ address: WATCHED, walletId: 'w1' }]);
+
+    // Trigger reconnect.
+    stream1.ee.emit('error', new Error('reset'));
+    await vi.advanceTimersByTimeAsync(1_001);
+    expect(client.subscribe).toHaveBeenCalledTimes(2);
+
+    // Emit a valid transaction on the *old* stream — must be dropped.
+    stream1.ee.emit(
+      'data',
+      buildTransferUpdate({
+        fromBase58: WATCHED,
+        toBase58: OTHER,
+        signatureBytes: SIG,
+        slot: 7,
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onTx).not.toHaveBeenCalled();
+
+    // The new stream still delivers normally.
+    stream2.ee.emit(
+      'data',
+      buildTransferUpdate({
+        fromBase58: WATCHED,
+        toBase58: OTHER,
+        signatureBytes: SIG,
+        slot: 8,
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onTx).toHaveBeenCalledOnce();
+
+    await listener.stop();
+  });
+
   it('reconnects with exponential backoff on stream error', async () => {
     const stream1 = makeStream();
     const stream2 = makeStream();

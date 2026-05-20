@@ -53,12 +53,17 @@ export type TokenBalance = {
   uiTokenAmount?: { amount?: string; decimals?: number };
 };
 
+export type ClientFactory = (
+  endpoint: string,
+  xToken: string,
+) => YellowstoneClientLike | Promise<YellowstoneClientLike>;
+
 export type SolanaGrpcListenerOptions = {
   endpoint: string;
   xToken: string;
   walletAddresses?: string[];
   /** Injected only by tests — production code builds the real Yellowstone client. */
-  clientFactory?: (endpoint: string, xToken: string) => YellowstoneClientLike;
+  clientFactory?: ClientFactory;
 };
 
 const FILTER_NAME = 'wat_filter';
@@ -69,7 +74,7 @@ export class SolanaGrpcListener implements ChainListener {
 
   private readonly endpoint: string;
   private readonly xToken: string;
-  private readonly clientFactory: (endpoint: string, xToken: string) => YellowstoneClientLike;
+  private readonly clientFactory: ClientFactory;
   private readonly watched = new Map<string, string>(); // address -> walletId
 
   private client: YellowstoneClientLike | null = null;
@@ -78,6 +83,8 @@ export class SolanaGrpcListener implements ChainListener {
   private stopped = false;
   private reconnectAttempts = 0;
   private pendingTimer: NodeJS.Timeout | null = null;
+  /** Monotonic counter — stale handlers no-op when their generation != the current one. */
+  private gen = 0;
 
   constructor(opts: SolanaGrpcListenerOptions) {
     this.endpoint = opts.endpoint;
@@ -97,16 +104,37 @@ export class SolanaGrpcListener implements ChainListener {
 
   async stop(): Promise<void> {
     this.stopped = true;
-    if (this.pendingTimer) clearTimeout(this.pendingTimer);
-    this.pendingTimer = null;
-    try {
-      this.stream?.end?.();
-      this.stream?.destroy?.();
-    } catch {
-      // ignore — we're tearing down
+    if (this.pendingTimer) {
+      clearTimeout(this.pendingTimer);
+      this.pendingTimer = null;
     }
-    this.stream = null;
+    this.teardownStream();
     this.client = null;
+  }
+
+  /** Detach listeners from the current stream and discard it. */
+  private teardownStream(): void {
+    const s = this.stream;
+    if (!s) return;
+    this.stream = null;
+    // Bump generation so any in-flight handler from this stream becomes a no-op.
+    this.gen++;
+    try {
+      const ee = s as unknown as { removeAllListeners?: () => void };
+      ee.removeAllListeners?.();
+    } catch {
+      /* ignore */
+    }
+    try {
+      s.end?.();
+    } catch {
+      /* ignore */
+    }
+    try {
+      s.destroy?.();
+    } catch {
+      /* ignore */
+    }
   }
 
   async watch(address: string, walletId: string): Promise<void> {
@@ -123,20 +151,19 @@ export class SolanaGrpcListener implements ChainListener {
   /** Visible for tests — manually trigger one reconnect cycle. */
   async refreshSubscription(): Promise<void> {
     if (!this.stream) return;
-    try {
-      this.stream.end?.();
-    } catch {
-      /* ignore */
-    }
-    this.stream = null;
+    this.teardownStream();
     await this.connect();
   }
 
   private async connect(): Promise<void> {
     if (this.stopped) return;
+    // Always start from a clean slate — kills any prior stream + its handlers.
+    this.teardownStream();
+
     const m = metrics();
+    const myGen = ++this.gen;
     try {
-      this.client ??= this.clientFactory(this.endpoint, this.xToken);
+      this.client ??= await this.clientFactory(this.endpoint, this.xToken);
       const stream = await this.client.subscribe();
       this.stream = stream;
 
@@ -144,17 +171,32 @@ export class SolanaGrpcListener implements ChainListener {
       await stream.write(req);
       m.rpcRequests.inc({ chain: this.chain, method: 'subscribe', status: 'ok' });
 
-      stream.on('data', (msg) => void this.handleMessage(msg));
+      // Generation guard — if the stream is replaced (reconnect, stop, refresh),
+      // handlers from this connect attempt become no-ops instead of firing
+      // against a stale stream reference.
+      const isCurrent = (): boolean => myGen === this.gen && !this.stopped;
+
+      stream.on('data', (msg) => {
+        if (!isCurrent()) return;
+        void this.handleMessage(msg);
+      });
       stream.on('error', (err) => {
+        if (!isCurrent()) return;
         m.rpcRequests.inc({ chain: this.chain, method: 'subscribe', status: 'error' });
         logger.warn({ err }, 'yellowstone stream error');
         this.scheduleReconnect();
       });
-      stream.on('end', () => this.scheduleReconnect());
-      stream.on('close', () => this.scheduleReconnect());
+      stream.on('end', () => {
+        if (!isCurrent()) return;
+        this.scheduleReconnect();
+      });
+      stream.on('close', () => {
+        if (!isCurrent()) return;
+        this.scheduleReconnect();
+      });
 
       this.reconnectAttempts = 0;
-      logger.info({ wallets: this.watched.size }, 'yellowstone subscribed');
+      logger.info({ wallets: this.watched.size, gen: myGen }, 'yellowstone subscribed');
     } catch (err) {
       m.rpcRequests.inc({ chain: this.chain, method: 'subscribe', status: 'error' });
       logger.error({ err }, 'yellowstone connect failed');
@@ -231,17 +273,18 @@ export class SolanaGrpcListener implements ChainListener {
   }
 }
 
-function defaultClientFactory(endpoint: string, xToken: string): YellowstoneClientLike {
-  // Dynamic import avoids loading the gRPC native bindings in test environments.
-  // We cast to the structural interface — the real Client matches it.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const mod = require('@triton-one/yellowstone-grpc');
-  const Client = (mod.default ?? mod) as new (
-    endpoint: string,
-    token: string,
-    opts?: object,
-  ) => YellowstoneClientLike;
-  return new Client(endpoint, xToken, {});
+async function defaultClientFactory(
+  endpoint: string,
+  xToken: string,
+): Promise<YellowstoneClientLike> {
+  // Dynamic import is required in ESM ("type": "module") and also avoids loading
+  // the gRPC native bindings in test environments where the factory is mocked.
+  const mod = (await import('@triton-one/yellowstone-grpc')) as unknown as {
+    default?: new (e: string, t: string, opts?: object) => YellowstoneClientLike;
+  } & { new?: never };
+  const Ctor =
+    (mod.default ?? (mod as unknown as new (e: string, t: string, opts?: object) => YellowstoneClientLike));
+  return new Ctor(endpoint, xToken, {});
 }
 
 export function buildSubscribeRequest(addresses: string[]): {

@@ -10,7 +10,7 @@ import {
 } from './queues/index.js';
 import { prisma } from './db/prisma.js';
 import { enrich } from './pipeline/enrichment.js';
-import { evaluateAlerts } from './alerts/engine.js';
+import { evaluateAlerts, requeuePendingAlertEvents } from './alerts/engine.js';
 import { sendTelegram, formatTxMessage } from './notifications/telegram.js';
 import { sendWebhook } from './notifications/webhook.js';
 import { wsHub } from './notifications/wsHub.js';
@@ -159,8 +159,16 @@ for (const [name, w] of Object.entries({ rawTxWorker, enrichWorker, notifyWorker
   w.on('completed', (job) => logger.debug({ name, jobId: job.id }, 'job done'));
 }
 
+// Outbox reaper — picks up AlertEvents that didn't reach the notify queue.
+const REAPER_INTERVAL_MS = 30_000;
+const reaperTimer: NodeJS.Timeout = setInterval(() => {
+  void requeuePendingAlertEvents().catch((err) => logger.warn({ err }, 'reaper tick failed'));
+}, REAPER_INTERVAL_MS);
+reaperTimer.unref?.();
+
 async function shutdown(signal: string) {
   logger.info({ signal }, 'shutting down workers');
+  clearInterval(reaperTimer);
   await Promise.all([rawTxWorker.close(), enrichWorker.close(), notifyWorker.close()]);
   await prisma.$disconnect();
   process.exit(0);
