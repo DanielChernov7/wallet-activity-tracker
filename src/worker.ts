@@ -15,6 +15,9 @@ import { sendTelegram, formatTxMessage } from './notifications/telegram.js';
 import { sendWebhook } from './notifications/webhook.js';
 import { wsHub } from './notifications/wsHub.js';
 import { logger } from './config/logger.js';
+import { metrics } from './metrics/index.js';
+
+const M = metrics();
 
 /**
  * Raw tx worker — persists the raw event and hands off to enrichment.
@@ -27,21 +30,27 @@ const rawTxWorker = new Worker<RawTxJob>(
     const from = r.from ?? '';
     const to = r.to ?? '';
 
-    const tx = await prisma.transaction.upsert({
-      where: {
-        chain_hash_fromAddress_toAddress: { chain: chain as Chain, hash, fromAddress: from, toAddress: to },
-      },
-      create: {
-        chain: chain as Chain,
-        hash,
-        type: 'UNKNOWN',
-        fromAddress: from,
-        toAddress: to,
-        raw: raw as object,
-      },
-      update: {},
-    });
-    await enrichQueue.add('enrich', { rawTxId: tx.id });
+    try {
+      const tx = await prisma.transaction.upsert({
+        where: {
+          chain_hash_fromAddress_toAddress: { chain: chain as Chain, hash, fromAddress: from, toAddress: to },
+        },
+        create: {
+          chain: chain as Chain,
+          hash,
+          type: 'UNKNOWN',
+          fromAddress: from,
+          toAddress: to,
+          raw: raw as object,
+        },
+        update: {},
+      });
+      await enrichQueue.add('enrich', { rawTxId: tx.id });
+      M.transactionsProcessed.inc({ chain, tx_type: 'UNKNOWN', status: 'ok' });
+    } catch (err) {
+      M.transactionsProcessed.inc({ chain, tx_type: 'UNKNOWN', status: 'error' });
+      throw err;
+    }
   },
   { connection, concurrency: 16 },
 );
@@ -55,6 +64,7 @@ const enrichWorker = new Worker<EnrichJob>(
     const tx = await prisma.transaction.findUnique({ where: { id: job.data.rawTxId } });
     if (!tx) return;
 
+    const endTimer = M.enrichmentDuration.startTimer({ chain: tx.chain });
     const enriched = await enrich({
       chain: tx.chain,
       hash: tx.hash,
@@ -63,6 +73,7 @@ const enrichWorker = new Worker<EnrichJob>(
       to: tx.toAddress,
       raw: tx.raw,
     });
+    endTimer();
 
     await prisma.transaction.update({
       where: { id: tx.id },
@@ -72,6 +83,9 @@ const enrichWorker = new Worker<EnrichJob>(
         tokenAmount: enriched.tokenAmount,
         valueUsd: enriched.valueUsd,
         walletId: enriched.walletId,
+        metadata: enriched.metadata
+          ? (JSON.parse(JSON.stringify(enriched.metadata, bigintReplacer)) as object)
+          : undefined,
       },
     });
 
@@ -94,22 +108,35 @@ const notifyWorker = new Worker<NotifyJob>(
 
     const errors: string[] = [];
 
+    const conditionType = (alert.condition as { type?: string })?.type ?? 'unknown';
+
     if (channels.telegram) {
+      const end = M.notificationDuration.startTimer({ channel: 'telegram' });
       try {
         await sendTelegram(formatTxMessage(payload as any));
+        M.alertsFired.inc({ channel: 'telegram', condition: conditionType });
       } catch (e) {
         errors.push(`telegram: ${(e as Error).message}`);
+      } finally {
+        end();
       }
     }
     if (channels.webhook) {
+      const end = M.notificationDuration.startTimer({ channel: 'webhook' });
       try {
         await sendWebhook(channels.webhook, payload);
+        M.alertsFired.inc({ channel: 'webhook', condition: conditionType });
       } catch (e) {
         errors.push(`webhook: ${(e as Error).message}`);
+      } finally {
+        end();
       }
     }
     if (channels.websocket) {
+      const end = M.notificationDuration.startTimer({ channel: 'websocket' });
       wsHub.broadcast('alert', payload);
+      M.alertsFired.inc({ channel: 'websocket', condition: conditionType });
+      end();
     }
 
     const eventId = (payload as any).eventId as string | undefined;
@@ -140,5 +167,9 @@ async function shutdown(signal: string) {
 }
 process.on('SIGINT', () => void shutdown('SIGINT'));
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
+
+function bigintReplacer(_key: string, value: unknown): unknown {
+  return typeof value === 'bigint' ? value.toString() : value;
+}
 
 logger.info('workers ready');

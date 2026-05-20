@@ -6,6 +6,7 @@ import type {
   WatchedAddress,
 } from '../ChainListener.js';
 import { logger } from '../../config/logger.js';
+import { metrics } from '../../metrics/index.js';
 
 const ERC20_TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
 
@@ -116,8 +117,10 @@ export class EvmListener implements ChainListener {
 
   private async handleBlock(blockNumber: number): Promise<void> {
     if (!this.provider || this.watched.size === 0) return;
+    const m = metrics();
     try {
       const block = await this.provider.getBlock(blockNumber, true);
+      m.rpcRequests.inc({ chain: this.chain, method: 'eth_getBlockByNumber', status: 'ok' });
       if (!block) return;
       for (const tx of block.prefetchedTransactions ?? []) {
         const from = tx.from?.toLowerCase() ?? '';
@@ -140,6 +143,7 @@ export class EvmListener implements ChainListener {
         });
       }
     } catch (err) {
+      m.rpcRequests.inc({ chain: this.chain, method: 'eth_getBlockByNumber', status: 'error' });
       logger.error({ err, chain: this.chain, blockNumber }, 'failed to scan block');
     }
   }

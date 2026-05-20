@@ -18,6 +18,8 @@ enum TxType {
   TRANSFER
   ERC20_TRANSFER
   SWAP
+  ADD_LIQUIDITY
+  REMOVE_LIQUIDITY
   NFT_MINT
   NFT_TRANSFER
   CONTRACT_CALL
@@ -61,6 +63,7 @@ model Transaction {
   tokenAmount String?
   valueUsd    Float?
   raw         Json
+  metadata    Json?
   walletId    String?
   wallet      Wallet?  @relation(fields: [walletId], references: [id], onDelete: SetNull)
   createdAt   DateTime @default(now())

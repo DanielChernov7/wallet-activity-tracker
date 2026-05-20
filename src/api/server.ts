@@ -6,6 +6,8 @@ import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
 import { prisma } from '../db/prisma.js';
 import { wsHub } from '../notifications/wsHub.js';
+import { metricsRoute } from './routes/metrics.js';
+import { startMetricsPollers } from '../metrics/pollers.js';
 
 const ChainEnum = z.nativeEnum(Chain);
 
@@ -27,6 +29,9 @@ export async function buildServer() {
   await app.register(websocket);
 
   app.get('/health', async () => ({ ok: true, ts: Date.now(), wsClients: wsHub.size() }));
+
+  await metricsRoute(app);
+  startMetricsPollers();
 
   app.get('/wallets', async () => prisma.wallet.findMany({ orderBy: { createdAt: 'desc' } }));
 

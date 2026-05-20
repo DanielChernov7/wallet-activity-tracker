@@ -35,6 +35,11 @@ const schema = z.object({
   MULTICALL3_ADDRESS: z
     .string()
     .default('0xcA11bde05977b3631167028862bE2a173976CA11'),
+
+  LABEL_CACHE_REDIS_ENABLED: boolish,
+
+  METRICS_AUTH_USER: z.string().optional(),
+  METRICS_AUTH_PASS: z.string().optional(),
 });
 
 export type Env = z.infer<typeof schema>;

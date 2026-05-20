@@ -29,6 +29,8 @@ services:
       timeout: 3s
       retries: 20
 
+  # prometheus: scrape http://app:3000/metrics, interval: 15s
+  # (drop a sidecar Prometheus container here pointed at app:3000)
   app:
     build:
       context: .
