@@ -68,6 +68,7 @@ docker compose up -d          # postgres + redis
 npm install
 npm run prisma:generate
 npm run prisma:migrate -- --name init
+npm run db:seed              # populate AddressLabel with CEXes / DEXes / tokens
 ```
 
 ## Running

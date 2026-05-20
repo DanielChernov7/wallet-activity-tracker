@@ -1,6 +1,7 @@
 import { Chain, TxType } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { getUsdPrice } from '../prices/prices.js';
+import { lookupLabel } from '../labels/labels.js';
 import { logger } from '../config/logger.js';
 
 export type EnrichedTx = {
@@ -10,6 +11,8 @@ export type EnrichedTx = {
   blockNumber?: bigint;
   from: string;
   to: string;
+  fromLabel?: string;
+  toLabel?: string;
   tokenSymbol?: string;
   tokenAmount?: string;
   valueUsd?: number;
@@ -28,7 +31,11 @@ type RawInput = {
 
 export async function enrich(input: RawInput): Promise<EnrichedTx> {
   const type = classify(input);
-  const wallet = await findOwningWallet(input.chain, [input.from, input.to]);
+  const [wallet, fromLabel, toLabel] = await Promise.all([
+    findOwningWallet(input.chain, [input.from, input.to]),
+    lookupLabel(input.chain, input.from).catch(() => null),
+    lookupLabel(input.chain, input.to).catch(() => null),
+  ]);
 
   let valueUsd: number | undefined;
   let tokenSymbol: string | undefined;
@@ -56,6 +63,8 @@ export async function enrich(input: RawInput): Promise<EnrichedTx> {
     blockNumber: input.blockNumber,
     from: input.from,
     to: input.to,
+    fromLabel: fromLabel?.label,
+    toLabel: toLabel?.label,
     tokenSymbol,
     tokenAmount,
     valueUsd,

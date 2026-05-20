@@ -29,6 +29,8 @@ export function formatTxMessage(payload: {
     hash: string;
     from: string;
     to: string;
+    fromLabel?: string;
+    toLabel?: string;
     valueUsd?: number;
     tokenSymbol?: string;
     tokenAmount?: string;
@@ -39,14 +41,19 @@ export function formatTxMessage(payload: {
   return [
     `<b>${escapeHtml(alert.name)}</b>`,
     `Chain: <code>${tx.chain}</code>  Type: <code>${tx.type}</code>`,
-    `From: <code>${tx.from}</code>`,
-    `To: <code>${tx.to}</code>`,
+    `From: ${renderParty(tx.from, tx.fromLabel)}`,
+    `To: ${renderParty(tx.to, tx.toLabel)}`,
     tx.tokenSymbol ? `Token: <code>${tx.tokenSymbol}</code>  Amount: <code>${tx.tokenAmount}</code>` : '',
     `Value: <b>${usd}</b>`,
     `Tx: <code>${tx.hash}</code>`,
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+function renderParty(address: string, label?: string): string {
+  if (label) return `<b>${escapeHtml(label)}</b> (<code>${address}</code>)`;
+  return `<code>${address}</code>`;
 }
 
 function escapeHtml(s: string): string {

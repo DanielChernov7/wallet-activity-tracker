@@ -13,6 +13,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
+    "db:seed": "tsx prisma/seeds/labels.ts",
     "worker": "tsx src/worker.ts",
     "api": "tsx src/api/server.ts",
     "pretest": "prisma generate",

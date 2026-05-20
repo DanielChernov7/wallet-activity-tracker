@@ -11,6 +11,10 @@ vi.mock('../../src/prices/prices.js', () => ({
   getUsdPrice: vi.fn(),
 }));
 
+vi.mock('../../src/labels/labels.js', () => ({
+  lookupLabel: vi.fn().mockResolvedValue(null),
+}));
+
 vi.mock('../../src/config/logger.js', () => ({
   logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -18,6 +22,7 @@ vi.mock('../../src/config/logger.js', () => ({
 import { classify, enrich } from '../../src/pipeline/enrichment.js';
 import { prisma } from '../../src/db/prisma.js';
 import { getUsdPrice } from '../../src/prices/prices.js';
+import { lookupLabel } from '../../src/labels/labels.js';
 
 describe('enrichment — classify()', () => {
   const base = {
@@ -52,6 +57,8 @@ describe('enrichment — enrich()', () => {
   beforeEach(() => {
     vi.mocked(prisma.wallet.findFirst).mockReset();
     vi.mocked(getUsdPrice).mockReset();
+    vi.mocked(lookupLabel).mockReset();
+    vi.mocked(lookupLabel).mockResolvedValue(null);
   });
 
   it('links walletId when from or to is a tracked wallet', async () => {
@@ -124,6 +131,42 @@ describe('enrichment — enrich()', () => {
 
     expect(result.valueUsd).toBeUndefined();
     expect(result.type).toBe(TxType.TRANSFER);
+  });
+
+  it('attaches fromLabel/toLabel when known', async () => {
+    vi.mocked(prisma.wallet.findFirst).mockResolvedValueOnce(null);
+    vi.mocked(getUsdPrice).mockResolvedValueOnce(0);
+    vi.mocked(lookupLabel)
+      .mockResolvedValueOnce({ label: 'Binance 14', category: 'cex' })
+      .mockResolvedValueOnce({ label: 'Uniswap V3: SwapRouter02', category: 'dex' });
+
+    const result = await enrich({
+      chain: Chain.ETHEREUM,
+      hash: '0x1',
+      from: '0xfrom',
+      to: '0xto',
+      raw: { kind: 'native', value: '1' },
+    });
+
+    expect(result.fromLabel).toBe('Binance 14');
+    expect(result.toLabel).toBe('Uniswap V3: SwapRouter02');
+  });
+
+  it('label-lookup errors are swallowed; labels stay undefined', async () => {
+    vi.mocked(prisma.wallet.findFirst).mockResolvedValueOnce(null);
+    vi.mocked(getUsdPrice).mockResolvedValueOnce(0);
+    vi.mocked(lookupLabel).mockRejectedValue(new Error('db down'));
+
+    const result = await enrich({
+      chain: Chain.ETHEREUM,
+      hash: '0x1',
+      from: '0xfrom',
+      to: '0xto',
+      raw: { kind: 'native', value: '1' },
+    });
+
+    expect(result.fromLabel).toBeUndefined();
+    expect(result.toLabel).toBeUndefined();
   });
 
   it('UNKNOWN kind: no price lookup, no token fields', async () => {
