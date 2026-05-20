@@ -20,6 +20,8 @@ const schema = z.object({
   SOLANA_RPC_URL: z.string().optional(),
   YELLOWSTONE_GRPC_URL: z.string().optional(),
   YELLOWSTONE_GRPC_TOKEN: z.string().optional(),
+  YELLOWSTONE_ENDPOINT: z.string().optional(),
+  YELLOWSTONE_TOKEN: z.string().optional(),
 
   COINGECKO_API_KEY: z.string().optional(),
   JUPITER_PRICE_URL: z.string().default('https://price.jup.ag/v6/price'),
@@ -40,6 +42,8 @@ const schema = z.object({
 
   METRICS_AUTH_USER: z.string().optional(),
   METRICS_AUTH_PASS: z.string().optional(),
+
+  API_KEYS: z.string().optional(),
 });
 
 export type Env = z.infer<typeof schema>;

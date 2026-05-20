@@ -4,7 +4,7 @@ import { logger } from './config/logger.js';
 import { prisma } from './db/prisma.js';
 import { rawTxQueue } from './queues/index.js';
 import { EvmListener } from './chains/evm/EvmListener.js';
-import { SolanaListener } from './chains/solana/SolanaListener.js';
+import { createSolanaListener } from './listeners/index.js';
 import type { ChainListener, RawTransactionEvent } from './chains/ChainListener.js';
 
 async function loadWatchedFor(chain: Chain) {
@@ -42,8 +42,10 @@ async function main() {
   if (env.ARBITRUM_WSS_URL) {
     listeners.push(new EvmListener({ chain: Chain.ARBITRUM, wssUrl: env.ARBITRUM_WSS_URL }));
   }
-  if (env.SOLANA_RPC_URL) {
-    listeners.push(new SolanaListener({ rpcUrl: env.SOLANA_RPC_URL }));
+  if (env.YELLOWSTONE_ENDPOINT || env.SOLANA_RPC_URL) {
+    // Address allowlist is populated by bootListener() from the DB; we pass [] here
+    // and rely on watch() calls during boot to subscribe with the real filter.
+    listeners.push(createSolanaListener([]));
   }
 
   if (listeners.length === 0) {

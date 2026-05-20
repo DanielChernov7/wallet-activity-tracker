@@ -25,15 +25,19 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "typecheck": "tsc --noEmit",
     "worker": "tsx src/worker.ts",
     "api": "tsx src/api/server.ts",
     "bot": "tsx src/bot/index.ts"
   },
   "dependencies": {
+    "@fastify/rate-limit": "10.2.1",
     "@fastify/websocket": "11.0.1",
     "@prisma/client": "5.22.0",
     "@solana/web3.js": "1.95.4",
+    "@triton-one/yellowstone-grpc": "1.3.0",
+    "bs58": "6.0.0",
     "bullmq": "5.34.0",
     "dotenv": "16.4.5",
     "ethers": "6.13.4",
@@ -51,7 +55,10 @@
     "prisma": "5.22.0",
     "tsx": "4.19.2",
     "typescript": "5.6.3",
-    "vitest": "2.1.5"
+    "vitest": "2.1.5",
+    "testcontainers": "10.13.2",
+    "@testcontainers/postgresql": "10.13.2",
+    "@testcontainers/redis": "10.13.2"
   },
   "engines": {
     "node": ">=22"

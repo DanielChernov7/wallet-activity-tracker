@@ -86,6 +86,8 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/wallet_tracker?schema=public}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      YELLOWSTONE_ENDPOINT: ${YELLOWSTONE_ENDPOINT:-}
+      YELLOWSTONE_TOKEN: ${YELLOWSTONE_TOKEN:-}
     command: ["node", "dist/index.js"]
     depends_on:
       postgres:

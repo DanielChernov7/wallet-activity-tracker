@@ -8,6 +8,8 @@ import { prisma } from '../db/prisma.js';
 import { wsHub } from '../notifications/wsHub.js';
 import { metricsRoute } from './routes/metrics.js';
 import { startMetricsPollers } from '../metrics/pollers.js';
+import { authPlugin } from './plugins/auth.js';
+import { rateLimitPlugin } from './plugins/rateLimit.js';
 
 const ChainEnum = z.nativeEnum(Chain);
 
@@ -24,14 +26,24 @@ const CreateAlert = z.object({
   channels: z.record(z.unknown()),
 });
 
-export async function buildServer() {
+export type BuildServerOptions = {
+  skipPollers?: boolean;
+  skipRateLimit?: boolean;
+};
+
+export async function buildServer(opts: BuildServerOptions = {}) {
   const app = Fastify({ logger });
   await app.register(websocket);
+
+  await app.register(authPlugin);
+  if (!opts.skipRateLimit) {
+    await app.register(rateLimitPlugin);
+  }
 
   app.get('/health', async () => ({ ok: true, ts: Date.now(), wsClients: wsHub.size() }));
 
   await metricsRoute(app);
-  startMetricsPollers();
+  if (!opts.skipPollers) startMetricsPollers();
 
   app.get('/wallets', async () => prisma.wallet.findMany({ orderBy: { createdAt: 'desc' } }));
 
