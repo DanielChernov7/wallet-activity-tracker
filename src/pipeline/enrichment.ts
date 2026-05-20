@@ -64,7 +64,7 @@ export async function enrich(input: RawInput): Promise<EnrichedTx> {
   };
 }
 
-function classify(input: RawInput): TxType {
+export function classify(input: RawInput): TxType {
   const k = input.raw?.kind;
   if (k === 'erc20_transfer') return TxType.ERC20_TRANSFER;
   if (k === 'native') return TxType.TRANSFER;

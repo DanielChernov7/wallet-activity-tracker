@@ -47,7 +47,7 @@ export async function evaluateAlerts(tx: EnrichedTx, transactionId: string): Pro
   }
 }
 
-async function matches(c: AlertCondition, tx: EnrichedTx): Promise<boolean> {
+export async function matches(c: AlertCondition, tx: EnrichedTx): Promise<boolean> {
   switch (c.type) {
     case 'any':
       return true;
